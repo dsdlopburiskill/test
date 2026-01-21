@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ทดสอบการเชื่อมต่อ Firebase</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ตัวแปร Global สำหรับ App
+        let db;
+        let auth;
+        let user = null;
+        let appId;
+        let logs = [];
+
+        // ฟังก์ชันสำหรับบันทึก Log ลงหน้าจอ
+        function addLog(type, message) {
+            const logContainer = document.getElementById('log-container');
+            const icon = type === 'success' ? '<i class="fas fa-check-circle text-green-500"></i>' : 
+                         type === 'error' ? '<i class="fas fa-times-circle text-red-500"></i>' : 
+                         '<i class="fas fa-info-circle text-blue-500"></i>';
+            
+            const div = document.createElement('div');
+            div.className = "flex items-start gap-2 p-2 border-b border-gray-100 text-sm";
+            div.innerHTML = `
+                <span class="mt-1">${icon}</span>
+                <span class="text-gray-700">${message}</span>
+                <span class="ml-auto text-xs text-gray-400">${new Date().toLocaleTimeString()}</span>
+            `;
+            logContainer.prepend(div);
+        }
+
+        // อัปเดตสถานะ UI
+        function updateStatus(elementId, status, text) {
+            const el = document.getElementById(elementId);
+            const badge = el.querySelector('.status-badge');
+            const label = el.querySelector('.status-text');
+
+            label.textContent = text;
+            
+            if (status === 'success') {
+                badge.className = "status-badge w-3 h-3 rounded-full bg-green-500";
+                el.className = "flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg";
+            } else if (status === 'error') {
+                badge.className = "status-badge w-3 h-3 rounded-full bg-red-500";
+                el.className = "flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg";
+            } else {
+                badge.className = "status-badge w-3 h-3 rounded-full bg-yellow-500 animate-pulse";
+                el.className = "flex items-center gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg";
+            }
+        }
+
+        async function initFirebase() {
+            try {
+                addLog('info', 'กำลังเริ่มระบบ Firebase...');
+                
+                // 1. ตรวจสอบ Config
+                if (typeof __firebase_config === 'undefined') {
+                    throw new Error("ไม่พบ __firebase_config ในระบบ");
+                }
+                const firebaseConfig = JSON.parse(__firebase_config);
+                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                addLog('success', 'Firebase App Initialized');
+                updateStatus('config-status', 'success', 'Config Loaded');
+
+                // 2. Authentication Flow
+                updateStatus('auth-status', 'pending', 'กำลังยืนยันตัวตน...');
+                
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    addLog('info', 'พบ Custom Token, กำลังเข้าสู่ระบบ...');
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    addLog('info', 'ไม่พบ Token, เข้าสู่ระบบแบบ Anonymous...');
+                    await signInAnonymously(auth);
+                }
+
+                // Listener สำหรับ Auth State
+                onAuthStateChanged(auth, (currentUser) => {
+                    if (currentUser) {
+                        user = currentUser;
+                        document.getElementById('user-id-display').textContent = `UID: ${user.uid.substring(0, 10)}...`;
+                        updateStatus('auth-status', 'success', 'Authenticated');
+                        addLog('success', `เข้าสู่ระบบสำเร็จ (UID: ${user.uid})`);
+                        
+                        // เปิดปุ่มทดสอบ
+                        document.getElementById('test-btn').disabled = false;
+                        document.getElementById('test-btn').classList.remove('opacity-50', 'cursor-not-allowed');
+                        
+                        // เริ่มฟังข้อมูล (Read Test) โดยอัตโนมัติ
+                        startFirestoreListener();
+                    } else {
+                        updateStatus('auth-status', 'error', 'Not Authenticated');
+                    }
+                });
+
+            } catch (error) {
+                console.error(error);
+                addLog('error', `Critical Error: ${error.message}`);
+                updateStatus('config-status', 'error', 'Initialization Failed');
+            }
+        }
+
+        function startFirestoreListener() {
+            if (!user || !appId) return;
+
+            addLog('info', 'เริ่มทำการ Listen ข้อมูลจาก Firestore...');
+            const collectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'connection_test');
+            
+            // Listener (Read Test)
+            onSnapshot(collectionRef, (snapshot) => {
+                updateStatus('firestore-read', 'success', `Read OK (${snapshot.size} docs)`);
+                // แสดงข้อมูลล่าสุด
+                const latest = snapshot.docs.map(doc => doc.data()).sort((a,b) => b.timestamp - a.timestamp)[0];
+                if (latest) {
+                    addLog('success', `ได้รับข้อมูลล่าสุด: "${latest.message}"`);
+                }
+            }, (error) => {
+                addLog('error', `Firestore Read Error: ${error.message}`);
+                updateStatus('firestore-read', 'error', 'Read Failed');
+            });
+        }
+
+        // ฟังก์ชันทดสอบการเขียน (Write Test)
+        window.performWriteTest = async () => {
+            if (!user) return;
+            
+            const btn = document.getElementById('test-btn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> กำลังส่งข้อมูล...';
+            btn.disabled = true;
+
+            try {
+                const collectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'connection_test');
+                await addDoc(collectionRef, {
+                    message: `Test Ping from Web - ${new Date().toLocaleTimeString()}`,
+                    timestamp: serverTimestamp(),
+                    sender: user.uid
+                });
+                
+                addLog('success', 'เขียนข้อมูลลง Firestore สำเร็จ (Write OK)');
+                updateStatus('firestore-write', 'success', 'Write OK');
+            } catch (error) {
+                console.error(error);
+                addLog('error', `Write Failed: ${error.message}`);
+                updateStatus('firestore-write', 'error', 'Write Failed');
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        };
+
+        // เริ่มต้นการทำงาน
+        initFirebase();
+    </script>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800 font-sans">
+
+    <div class="max-w-md mx-auto p-4 pt-10">
+        <!-- Header -->
+        <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-6">
+            <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white">
+                <h1 class="text-2xl font-bold mb-2"><i class="fas fa-satellite-dish mr-2"></i>Firebase Check</h1>
+                <p class="text-blue-100 text-sm">เครื่องมือตรวจสอบสถานะการเชื่อมต่อ</p>
+                <div id="user-id-display" class="mt-4 bg-white/20 inline-block px-3 py-1 rounded text-xs font-mono">
+                    Waiting for Auth...
+                </div>
+            </div>
+
+            <!-- Status Dashboard -->
+            <div class="p-6 space-y-3">
+                <h2 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">System Status</h2>
+                
+                <!-- Status Item 1: Config -->
+                <div id="config-status" class="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                    <div class="status-badge w-3 h-3 rounded-full bg-gray-400"></div>
+                    <span class="status-text font-medium text-sm">Checking Config...</span>
+                </div>
+
+                <!-- Status Item 2: Auth -->
+                <div id="auth-status" class="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                    <div class="status-badge w-3 h-3 rounded-full bg-gray-400"></div>
+                    <span class="status-text font-medium text-sm">Waiting for Auth...</span>
+                </div>
+
+                <!-- Status Item 3: Firestore Read -->
+                <div id="firestore-read" class="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                    <div class="status-badge w-3 h-3 rounded-full bg-gray-400"></div>
+                    <span class="status-text font-medium text-sm">Firestore Read Status</span>
+                </div>
+
+                <!-- Status Item 4: Firestore Write -->
+                <div id="firestore-write" class="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                    <div class="status-badge w-3 h-3 rounded-full bg-gray-400"></div>
+                    <span class="status-text font-medium text-sm">Firestore Write Status</span>
+                </div>
+            </div>
+
+            <!-- Action Button -->
+            <div class="p-6 pt-0">
+                <button id="test-btn" onclick="performWriteTest()" disabled 
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg shadow transition duration-200 flex items-center justify-center gap-2 opacity-50 cursor-not-allowed">
+                    <i class="fas fa-paper-plane"></i>
+                    ส่งข้อมูลทดสอบ (Write Test)
+                </button>
+            </div>
+        </div>
+
+        <!-- Logs Console -->
+        <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+            <div class="bg-gray-800 p-3 flex justify-between items-center">
+                <span class="text-gray-300 text-xs font-mono">SYSTEM LOGS</span>
+                <span class="flex gap-1">
+                    <div class="w-2 h-2 rounded-full bg-red-500"></div>
+                    <div class="w-2 h-2 rounded-full bg-yellow-500"></div>
+                    <div class="w-2 h-2 rounded-full bg-green-500"></div>
+                </span>
+            </div>
+            <div id="log-container" class="h-64 overflow-y-auto p-2 bg-gray-50 font-mono text-xs">
+                <!-- Logs will appear here -->
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
