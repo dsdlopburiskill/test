@@ -8,9 +8,8 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-analytics.js";
         // ตัวแปร Global สำหรับ App
         let db;
         let auth;
@@ -172,6 +171,8 @@
 
         // เริ่มต้นการทำงาน
         initFirebase();
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
     </script>
 </head>
 <body class="bg-gray-100 min-h-screen text-gray-800 font-sans">
@@ -244,3 +245,4 @@
 
 </body>
 </html>
+
